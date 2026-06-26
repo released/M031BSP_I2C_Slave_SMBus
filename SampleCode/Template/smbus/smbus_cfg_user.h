@@ -1,0 +1,88 @@
+#ifndef SMBUS_CFG_USER_H
+#define SMBUS_CFG_USER_H
+
+/*
+    All addresses in this file are 7-bit addresses. Convert to the on-wire
+    8-bit address only at the I2C transaction boundary.
+*/
+#define SMBUS_ADDRESS_7BIT_BASE               0x58U
+
+/*
+    Slot strap address table. Platform code reads A1/A0 and maps:
+    00 -> 0x58, 01 -> 0x59, 10 -> 0x5A, 11 -> 0x5B.
+    The fallback is used when the strap source is disabled or invalid.
+*/
+#define SMBUS_ADDRESS_STRAP_00_7BIT           0x58U
+#define SMBUS_ADDRESS_STRAP_01_7BIT           0x59U
+#define SMBUS_ADDRESS_STRAP_10_7BIT           0x5AU
+#define SMBUS_ADDRESS_STRAP_11_7BIT           0x5BU
+#define SMBUS_ADDRESS_INVALID_FALLBACK_7BIT   SMBUS_ADDRESS_STRAP_10_7BIT
+
+#define SMBUS_ADDRESS_7BIT_TO_WRITE(addr7)    ((unsigned char)((addr7) << 1))
+#define SMBUS_ADDRESS_7BIT_TO_READ(addr7)     ((unsigned char)(((addr7) << 1) | 0x01U))
+
+/*
+    Fixed transaction buffers. No dynamic allocation is used.
+    TX size is block-size plus count/PEC overhead.
+*/
+#define SMBUS_RX_BUFFER_SIZE                  40U
+#define SMBUS_TX_BUFFER_SIZE                  34U
+#define SMBUS_MAX_BLOCK_SIZE                  32U
+#define SMBUS_DEBUG_QUEUE_SIZE                96U
+#define SMBUS_DEBUG_FRAME_QUEUE_SIZE          32U
+#define SMBUS_DEBUG_TX_QUEUE_SIZE             16U
+
+#define SMBUS_PEC_POLICY_DISABLED             0U
+#define SMBUS_PEC_POLICY_OPTIONAL             1U
+#define SMBUS_PEC_POLICY_REQUIRED             2U
+/*
+    PEC policy selection:
+    - OPTIONAL: incoming PEC is validated when present, and read responses
+      include PEC.
+    - REQUIRED: write-side transactions without valid PEC are rejected.
+    - DISABLED: PEC is disabled. Use only for explicit bring-up tests.
+*/
+#ifndef SMBUS_PEC_POLICY
+#define SMBUS_PEC_POLICY                      SMBUS_PEC_POLICY_OPTIONAL
+#endif
+#define SMBUS_ENABLE_PEC                      ((SMBUS_PEC_POLICY) != SMBUS_PEC_POLICY_DISABLED)
+
+#define SMBUS_PEC_BACKEND_SOFTWARE            0U
+#define SMBUS_PEC_BACKEND_HW_CRC              1U
+/*
+    PEC CRC backend selection:
+    - SOFTWARE uses portable CRC-8 polynomial 0x07 code.
+    - HW_CRC uses the NuMicro CRC peripheral.
+*/
+#ifndef SMBUS_PEC_BACKEND
+#define SMBUS_PEC_BACKEND                     SMBUS_PEC_BACKEND_HW_CRC
+#endif
+
+/*
+    Debug output is queued from timing-sensitive paths and printed from the
+    background task. The default queue sizes are large enough to preserve the
+    full Pico Tool Run All log at 400 kHz without dropping example RX/TX
+    snapshots.
+*/
+#define SMBUS_DEBUG_ENABLE                    1U
+#define SMBUS_DEBUG_PRINT_RX_FRAME            1U
+#define SMBUS_DEBUG_PRINT_TX_READY            1U
+#define SMBUS_DEBUG_PRINT_TX_DECODE           1U
+#define SMBUS_DEBUG_PRINT_WRITE_DONE          1U
+#define SMBUS_DEBUG_PRINT_STATUS              0U
+
+/*
+    SMBus slave recovery. The software SCL-low monitor is retained because it
+    validates the SMBus timeout layer independently from command-set behavior.
+*/
+#define SMBUS_ENABLE_SLAVE_RECOVER            1U
+#define SMBUS_I2C_CLOCK_LOW_TIMEOUT_MS        35U
+#define SMBUS_I2C_TIMEOUT_RECOVER_THRESHOLD   1U
+#define SMBUS_I2C_BUS_ERROR_RECOVER_THRESHOLD 1U
+#define SMBUS_I2C_BUS_CLEAR_PULSES            9U
+#define SMBUS_I2C_BUS_CLEAR_RETRY_COUNT       3U
+#define SMBUS_I2C_RECOVER_MAX_ATTEMPTS        3U
+#define SMBUS_I2C_RECOVER_BACKOFF_CYCLES      2U
+#define SMBUS_I2C_STUCK_BUS_RETRY_CYCLES      50U
+
+#endif
