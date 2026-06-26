@@ -13,7 +13,7 @@ task1 id = 0
 task2 id = 1
 task3 id = 2
 SMBus quick write addr7=0x5A
-SMBus TX cmd=0x00 (UNKNOWN) proto=2 (RECEIVE_BYTE) len=2 raw=00 | PEC OK | PEC(tx=0x0E, calc=0x0E)
+SMBus quick read addr7=0x5A
 SMBus RX cmd=0x10 (SMB_EXAMPLE_SEND_BYTE_A) raw=2 payload=0 proto=1 rs=0 pec=1 valid=1
 address=0xB4:[0x10],[0x6B],
 SMBus write done cmd=0x10 len=0
@@ -86,8 +86,7 @@ SMBus RX cmd=0x20 (SMB_EXAMPLE_WRITE_BYTE_A) raw=3 payload=1 proto=3 rs=0 pec=1 
 address=0xB4:[0x20],[0x4A],[0xE1],
 SMBus PEC error cmd=0x20 frame=3
 SMBus quick write addr7=0x5A
-SMBus TX cmd=0x00 (UNKNOWN) proto=2 (RECEIVE_BYTE) len=2 raw=81 | PEC OK | PEC(tx=0x80, calc=0x80)
-SMBus quick write addr7=0x5A
+SMBus quick read addr7=0x5A
 SMBus RX cmd=0x10 (SMB_EXAMPLE_SEND_BYTE_A) raw=2 payload=0 proto=1 rs=0 pec=1 valid=1
 address=0xB4:[0x10],[0x6B],
 SMBus write done cmd=0x10 len=0
@@ -160,8 +159,7 @@ SMBus RX cmd=0x20 (SMB_EXAMPLE_WRITE_BYTE_A) raw=3 payload=1 proto=3 rs=0 pec=1 
 address=0xB4:[0x20],[0x4A],[0xE1],
 SMBus PEC error cmd=0x20 frame=3
 SMBus quick write addr7=0x5A
-SMBus TX cmd=0x00 (UNKNOWN) proto=2 (RECEIVE_BYTE) len=2 raw=83 | PEC OK | PEC(tx=0x8E, calc=0x8E)
-SMBus quick write addr7=0x5A
+SMBus quick read addr7=0x5A
 SMBus RX cmd=0x10 (SMB_EXAMPLE_SEND_BYTE_A) raw=2 payload=0 proto=1 rs=0 pec=1 valid=1
 address=0xB4:[0x10],[0x6B],
 SMBus write done cmd=0x10 len=0

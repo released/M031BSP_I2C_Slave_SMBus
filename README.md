@@ -224,8 +224,10 @@ Recommended validation flow:
 
 ## Expected Validation Signals
 
-The captures below use the second pass from the current example validation log,
-where the SMBus validation tool reports the examples at `16:19:20`.
+The captures below use the `21:29:54` pass from the current `teraterm.log` and
+validation-tool log. The same reflashed firmware also passed the adjacent
+`21:29:52` and `21:29:55` runs with `PASS=26 FAIL=0`; the `21:29:54` pass is
+used here because its counter bytes match the included LA screenshots.
 
 Address notation:
 
@@ -233,6 +235,8 @@ Address notation:
 - `0xB5` is the 8-bit read address for 7-bit slave address `0x5A`.
 - `[W][11][6C]` means the LA shows `START + 0xB4 + 0x11 + 0x6C + STOP`.
 - `[R][02][00]` means the LA shows `START + 0xB5 + 0x02 + 0x00 + STOP`.
+- Quick Read is address-only: the LA shows `START + 0xB5 + STOP` with no
+  data byte.
 
 A healthy `Run All` should pass all transaction families and the forced bad-PEC
 negative-path example. The bad-PEC transaction is expected to be `valid=0` in
@@ -246,7 +250,7 @@ SMBus quick write addr7=0x5A
 
 
 ```text
-SMBus TX cmd=0x00 (UNKNOWN) proto=2 (RECEIVE_BYTE) len=2 raw=81 | PEC OK | PEC(tx=0x80, calc=0x80)
+SMBus quick read addr7=0x5A
 ```
 
 ![Quick Read](cmd_0x00_RD.jpg)
@@ -460,6 +464,10 @@ address=0xB4:[0x20],[0x4A],[0xE1],
 SMBus PEC error cmd=0x20 frame=3
 ```
 
+This frame is the intentional Bad PEC negative test from the host. The correct
+PEC for `0xB4 0x20 0x4A` is `0x1E`, but the host sends `0xE1` to verify that
+the slave detects and reports the PEC failure.
+
 ![Forced Bad PEC Write Byte](W_20_4A_E1.jpg)
 
 ## Configuration Files
@@ -574,7 +582,9 @@ comparison, treat the frame as:
 [SLV write address],[command byte],...[PEC]
 ```
 
-For Receive Byte, there is no command byte. The MCU log reports the TX path as
+Quick Read and Receive Byte are intentionally different. Quick Read is
+address-only and logs as `SMBus quick read addr7=0x5A`; no data byte is clocked
+by the host. Receive Byte clocks data from the slave, so the MCU TX log reports
 `cmd=0x00 (UNKNOWN) proto=2 (RECEIVE_BYTE)` because this transaction is pure
 address-read plus data.
 

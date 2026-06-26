@@ -20,7 +20,8 @@ typedef enum
     SMBUS_DEBUG_EVENT_RECOVER,
     SMBUS_DEBUG_EVENT_RECOVER_FAIL,
     SMBUS_DEBUG_EVENT_CLOCK_LOW_TIMEOUT,
-    SMBUS_DEBUG_EVENT_QUICK_WRITE
+    SMBUS_DEBUG_EVENT_QUICK_WRITE,
+    SMBUS_DEBUG_EVENT_QUICK_READ
 } smbus_debug_event_id_t;
 
 typedef enum
@@ -117,10 +118,15 @@ static smbus_debug_frame_snapshot_t g_debug_frame_queue[SMBUS_DEBUG_FRAME_QUEUE_
 static volatile uint8_t g_debug_tx_head;
 static volatile uint8_t g_debug_tx_tail;
 static smbus_debug_tx_snapshot_t g_debug_tx_queue[SMBUS_DEBUG_TX_QUEUE_SIZE];
+static volatile uint8_t g_debug_tx_pending_valid;
+static smbus_debug_tx_snapshot_t g_debug_tx_pending_snapshot;
 
 static void smbus_drv_capture_debug_frame(uint8_t raw_length, smbus_dispatch_transaction_t *transaction);
 static void smbus_drv_print_debug_frame(const smbus_debug_frame_snapshot_t *snapshot);
 static void smbus_drv_capture_debug_tx(uint8_t command, uint8_t protocol, uint8_t command_length, uint8_t pec_present);
+static void smbus_drv_commit_debug_tx(void);
+static uint8_t smbus_drv_pending_debug_tx_is_read_only(void);
+static void smbus_drv_discard_debug_tx(void);
 static void smbus_drv_print_debug_tx(const smbus_debug_tx_snapshot_t *snapshot);
 static const char *smbus_drv_get_command_name(uint8_t command);
 static const char *smbus_drv_get_protocol_name(uint8_t protocol);
@@ -377,32 +383,10 @@ static uint8_t smbus_drv_compute_tx_pec(const smbus_debug_tx_snapshot_t *snapsho
 static void smbus_drv_capture_debug_tx(uint8_t command, uint8_t protocol, uint8_t command_length, uint8_t pec_present)
 {
 #if SMBUS_DEBUG_ENABLE && SMBUS_DEBUG_PRINT_TX_READY
-    uint8_t irq_state;
-    uint8_t next_tx_head;
-    uint8_t next_debug_head;
     uint8_t index;
     smbus_debug_tx_snapshot_t *snapshot;
 
-    irq_state = smbus_io_irq_save_disable();
-    next_tx_head = (uint8_t)(g_debug_tx_head + 1U);
-    if (next_tx_head >= SMBUS_DEBUG_TX_QUEUE_SIZE)
-    {
-        next_tx_head = 0U;
-    }
-
-    next_debug_head = (uint8_t)(g_debug_head + 1U);
-    if (next_debug_head >= SMBUS_DEBUG_QUEUE_SIZE)
-    {
-        next_debug_head = 0U;
-    }
-
-    if ((next_tx_head == g_debug_tx_tail) || (next_debug_head == g_debug_tail))
-    {
-        smbus_io_irq_restore(irq_state);
-        return;
-    }
-
-    snapshot = &g_debug_tx_queue[g_debug_tx_head];
+    snapshot = &g_debug_tx_pending_snapshot;
     snapshot->command = command;
     snapshot->protocol = protocol;
     snapshot->pec_present = pec_present;
@@ -423,17 +407,94 @@ static void smbus_drv_capture_debug_tx(uint8_t command, uint8_t protocol, uint8_
         snapshot->raw[index] = g_tx_buffer[index];
     }
 
-    g_debug_queue[g_debug_head].event_id = SMBUS_DEBUG_EVENT_TX_READY;
-    g_debug_queue[g_debug_head].value0 = g_debug_tx_head;
-    g_debug_queue[g_debug_head].value1 = 0U;
-    g_debug_tx_head = next_tx_head;
-    g_debug_head = next_debug_head;
-    smbus_io_irq_restore(irq_state);
+    g_debug_tx_pending_valid = 1U;
 #else
     command = command;
     protocol = protocol;
     command_length = command_length;
     pec_present = pec_present;
+#endif
+}
+
+static void smbus_drv_commit_debug_tx(void)
+{
+#if SMBUS_DEBUG_ENABLE && SMBUS_DEBUG_PRINT_TX_READY
+    uint8_t irq_state;
+    uint8_t next_tx_head;
+    uint8_t next_debug_head;
+    uint8_t index;
+    smbus_debug_tx_snapshot_t *snapshot;
+
+    if (g_debug_tx_pending_valid == 0U)
+    {
+        return;
+    }
+
+    irq_state = smbus_io_irq_save_disable();
+    next_tx_head = (uint8_t)(g_debug_tx_head + 1U);
+    if (next_tx_head >= SMBUS_DEBUG_TX_QUEUE_SIZE)
+    {
+        next_tx_head = 0U;
+    }
+
+    next_debug_head = (uint8_t)(g_debug_head + 1U);
+    if (next_debug_head >= SMBUS_DEBUG_QUEUE_SIZE)
+    {
+        next_debug_head = 0U;
+    }
+
+    if ((next_tx_head == g_debug_tx_tail) || (next_debug_head == g_debug_tail))
+    {
+        g_debug_tx_pending_valid = 0U;
+        smbus_io_irq_restore(irq_state);
+        return;
+    }
+
+    snapshot = &g_debug_tx_queue[g_debug_tx_head];
+    snapshot->command = g_debug_tx_pending_snapshot.command;
+    snapshot->protocol = g_debug_tx_pending_snapshot.protocol;
+    snapshot->pec_present = g_debug_tx_pending_snapshot.pec_present;
+    snapshot->raw_len = g_debug_tx_pending_snapshot.raw_len;
+    snapshot->command_length = g_debug_tx_pending_snapshot.command_length;
+
+    for (index = 0U; index < snapshot->command_length; index++)
+    {
+        snapshot->command_bytes[index] = g_debug_tx_pending_snapshot.command_bytes[index];
+    }
+
+    for (index = 0U; index < snapshot->raw_len; index++)
+    {
+        snapshot->raw[index] = g_debug_tx_pending_snapshot.raw[index];
+    }
+
+    g_debug_queue[g_debug_head].event_id = SMBUS_DEBUG_EVENT_TX_READY;
+    g_debug_queue[g_debug_head].value0 = g_debug_tx_head;
+    g_debug_queue[g_debug_head].value1 = 0U;
+    g_debug_tx_head = next_tx_head;
+    g_debug_head = next_debug_head;
+    g_debug_tx_pending_valid = 0U;
+    smbus_io_irq_restore(irq_state);
+#endif
+}
+
+static uint8_t smbus_drv_pending_debug_tx_is_read_only(void)
+{
+#if SMBUS_DEBUG_ENABLE && SMBUS_DEBUG_PRINT_TX_READY
+    if ((g_debug_tx_pending_valid != 0U) &&
+        (g_debug_tx_pending_snapshot.protocol == SMBUS_PROTOCOL_RECEIVE_BYTE) &&
+        (g_debug_tx_pending_snapshot.command_length == 0U))
+    {
+        return 1U;
+    }
+#endif
+
+    return 0U;
+}
+
+static void smbus_drv_discard_debug_tx(void)
+{
+#if SMBUS_DEBUG_ENABLE && SMBUS_DEBUG_PRINT_TX_READY
+    g_debug_tx_pending_valid = 0U;
 #endif
 }
 
@@ -498,6 +559,7 @@ static void smbus_drv_reset_tx(void)
     g_tx_length = 0U;
     g_tx_index = 0U;
     g_last_read_used_pec = 0U;
+    smbus_drv_discard_debug_tx();
 }
 
 static void smbus_drv_reset_rx(void)
@@ -1146,6 +1208,7 @@ void smbus_drv_init(void)
     g_debug_frame_tail = 0U;
     g_debug_tx_head = 0U;
     g_debug_tx_tail = 0U;
+    g_debug_tx_pending_valid = 0U;
 
     for (index = 0U; index < SMBUS_RX_BUFFER_SIZE; index++)
     {
@@ -1356,6 +1419,10 @@ void smbus_drv_background_task(void)
                 SMBUS_DEBUG_PRINT("SMBus quick write addr7=0x%02X\r\n", (unsigned int)event.value0);
                 break;
 
+            case SMBUS_DEBUG_EVENT_QUICK_READ:
+                SMBUS_DEBUG_PRINT("SMBus quick read addr7=0x%02X\r\n", (unsigned int)event.value0);
+                break;
+
             default:
                 break;
         }
@@ -1389,6 +1456,10 @@ SMBUS_PORT_I2C_ISR_PROTOTYPE
     {
         case SMBUS_I2C_STATUS_SLA_W_ACK:
             g_tx_finish_bus_error_guard = 0U;
+            if (smbus_drv_pending_debug_tx_is_read_only() != 0U)
+            {
+                smbus_drv_queue_event(SMBUS_DEBUG_EVENT_QUICK_READ, g_request_address_7bit, 0U);
+            }
             if (g_write_frame_pending != 0U)
             {
                 smbus_drv_restore_pending_request_context();
@@ -1458,7 +1529,15 @@ SMBUS_PORT_I2C_ISR_PROTOTYPE
             }
             else
             {
-                smbus_drv_queue_event(SMBUS_DEBUG_EVENT_QUICK_WRITE, g_request_address_7bit, 0U);
+                if (smbus_drv_pending_debug_tx_is_read_only() != 0U)
+                {
+                    smbus_drv_queue_event(SMBUS_DEBUG_EVENT_QUICK_READ, g_request_address_7bit, 0U);
+                    smbus_drv_reset_tx();
+                }
+                else
+                {
+                    smbus_drv_queue_event(SMBUS_DEBUG_EVENT_QUICK_WRITE, g_request_address_7bit, 0U);
+                }
             }
             smbus_io_i2c_set_ack();
             smbus_io_i2c_disable_timeout_counter();
@@ -1496,6 +1575,7 @@ SMBUS_PORT_I2C_ISR_PROTOTYPE
 
         case SMBUS_I2C_STATUS_DATA_TX_ACK:
             g_tx_finish_bus_error_guard = 0U;
+            smbus_drv_commit_debug_tx();
             smbus_drv_load_next_tx_byte();
             smbus_io_i2c_set_ack();
             smbus_io_i2c_disable_timeout_counter();
@@ -1503,6 +1583,7 @@ SMBUS_PORT_I2C_ISR_PROTOTYPE
 
         case SMBUS_I2C_STATUS_DATA_TX_NACK:
         case SMBUS_I2C_STATUS_LAST_TX_ACK:
+            smbus_drv_commit_debug_tx();
             smbus_drv_reset_tx();
             smbus_drv_reset_rx();
             g_tx_finish_bus_error_guard = 1U;
@@ -1516,6 +1597,10 @@ SMBUS_PORT_I2C_ISR_PROTOTYPE
         case SMBUS_I2C_STATUS_BUS_ERROR:
             if (g_tx_finish_bus_error_guard != 0U)
             {
+                if (smbus_drv_pending_debug_tx_is_read_only() != 0U)
+                {
+                    smbus_drv_queue_event(SMBUS_DEBUG_EVENT_QUICK_READ, g_request_address_7bit, 0U);
+                }
                 smbus_drv_reset_rx();
                 smbus_drv_reset_tx();
                 g_tx_finish_bus_error_guard = 0U;
