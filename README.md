@@ -163,6 +163,7 @@ Supported transaction formats include:
 - Block Write-Read Process Call
 - PEC enable/disable behavior
 - SCL-low timeout and bus-clear recovery
+- SMBALERT#/ARA transport service for upper-layer profiles
 
 The example command map is intentionally local to this sample:
 
@@ -185,6 +186,29 @@ SMBus transaction width is defined by the transaction type. Example A and B
 must use different command codes, but they can only use different data lengths
 when the SMBus transaction itself supports a variable-length payload. Block
 examples use 8 bytes for A and 16 bytes for B.
+
+SMBALERT#/ARA is implemented as a transport service only. The SMBus layer can
+drive or release the open-drain ALERT# pin and can respond to ARA `0x0C` with
+the alerting device write address plus optional PEC. It does not decide when to
+assert or release ALERT#. A concrete upper-layer profile, such as UBM, VPP,
+Smart Battery, or another vendor protocol, must update its own status/fault
+state and call `smbus_drv_assert_alert()` or `smbus_drv_release_alert()` when
+that profile's product policy allows it.
+
+Expected upper-layer behavior:
+
+```text
+Fault active -> upper profile status update -> smbus_drv_assert_alert()
+Host ARA -> return alerting device address, do not release ALERT#
+Host status/read command -> report profile status, do not release ALERT#
+Host profile clear/recovery command -> clear latched bits and re-evaluate active sources
+Fault still active -> keep ALERT# low
+Fault cleared -> upper profile calls smbus_drv_release_alert()
+```
+
+The checked-in Generic and UBM sample profiles do not automatically assert
+ALERT#. They expose the SMBus transport service so product-specific profiles can
+bind their own fault source, status, and clear/release policy later.
 
 ## Profile Selection
 
@@ -309,7 +333,7 @@ Recommended validation flow:
 9. Confirm the validation tool reports all expected profile checks as passed.
 10. Confirm the MCU UART log and LA captures match expected address, command, protocol, checksum/PEC, and payload behavior.
 
-## Expected Validation Signals
+## Expected Validation Signals: Generic Profile
 
 ### Generic Profile Signals
 
@@ -702,6 +726,16 @@ Address settings:
 | `SMBUS_ADDRESS_7BIT_TO_WRITE(addr7)` | `(addr7 << 1)` | Converts a 7-bit address to the 8-bit write address shown by LA tools. |
 | `SMBUS_ADDRESS_7BIT_TO_READ(addr7)` | `((addr7 << 1) | 1)` | Converts a 7-bit address to the 8-bit read address shown by LA tools. |
 
+SMBALERT#/ARA transport settings:
+
+| Define | Default | Purpose |
+| --- | --- | --- |
+| `SMBUS_ALERT_RESPONSE_ADDRESS_7BIT` | `0x0CU` | SMBus Alert Response Address used for ARA receive-byte transport. |
+| `SMBUS_ENABLE_ALERT_SERVICE` | `1U` | Builds the generic ALERT# drive/release APIs. This does not create any product fault policy. |
+| `SMBUS_ENABLE_ARA_ALIAS` | Derived from `SMBUS_ENABLE_ALERT_SERVICE` | Enables the ARA alias transport while ALERT# is asserted. |
+| `SMBUS_I2C_ALIAS_SLOT_DISABLED` | `0xFFU` | Sentinel for platforms that do not have a hardware secondary address slot. |
+| `SMBUS_I2C_ALIAS_SLOT_ARA` | `1U` | Platform alias slot used for ARA. |
+
 Profile and UBM settings:
 
 | Define | Default | Purpose |
@@ -767,6 +801,7 @@ another I2C instance, keep the SMBus common files unchanged and select or add a
 | ISR contract | `SMBUS_PORT_I2C_IRQHandler` and `SMBUS_PORT_I2C_ISR_PROTOTYPE`. |
 | Debug print | `SMBUS_DEBUG_PRINT=printf`. |
 | Pin MFP / GPIO macros | `SMBUS_PORT_SET_I2C_PINS_MFP`, `SMBUS_PORT_SET_I2C_PINS_GPIO`, `SMBUS_PORT_INIT_I2C_PINS`, bus-clear SCL/SDA read/drive macros. |
+| SMBALERT# macros | `SMBUS_PORT_ALERT_PIN_NAME`, `SMBUS_PORT_INIT_ALERT_PIN`, `SMBUS_PORT_ALERT_ASSERT`, and `SMBUS_PORT_ALERT_RELEASE`. Current sample uses `PB6/SMBALERT#` open-drain. |
 | Address strap macros | `SMBUS_ADDRESS_STRAP_USE_GPIO`, `SMBUS_PORT_INIT_ADDRESS_PINS`, `SMBUS_PORT_READ_ADDRESS_A0`, `SMBUS_PORT_READ_ADDRESS_A1`. |
 
 ## Debug Logging

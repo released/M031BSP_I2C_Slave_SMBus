@@ -8,10 +8,7 @@
     - Keep smbus_dispatch.c/.h, smbus_drv.c/.h, and smbus_pec.c/.h unchanged
       across MCU families when possible.
     - Re-implement this API for each platform such as MS51, M032, or M480.
-    - This repository keeps reusable source references in:
-      smbus_io_8051_generic.c
-      smbus_io_cortexm_generic.c
-      The project-selected implementation still stays in smbus_io.c.
+    - The project-selected implementation stays in smbus_io.c.
 
     Contract expectations:
     - All functions must be non-blocking.
@@ -19,6 +16,11 @@
     - smbus_io_i2c_get_received_address() should return the matched 7-bit
       slave address for the current SLA+W/SLA+R event when the MCU exposes it.
       If the platform cannot report it, return the primary SMBus address.
+    - smbus_io_i2c_slave_set_alias() configures optional secondary slave
+      address slots. The SMBus core uses this for ARA transport when the upper
+      layer has asserted ALERT#.
+    - ALERT# APIs must only drive or release the open-drain side-band signal.
+      They must not inspect or clear protocol fault/status state.
     - smbus_io_i2c_set_ack() and smbus_io_i2c_clear_ack() must only control
       the next ACK/NACK response state.
     - smbus_io_i2c_timeout_flag() and smbus_io_i2c_clear_timeout_flag() should
@@ -42,18 +44,21 @@
       SMBUS_PORT_SCL_PIN_NAME / SMBUS_PORT_SDA_PIN_NAME
     - Required platform actions include:
       SMBUS_PORT_I2C_ISR_PROTOTYPE
-      SMBUS_PORT_INIT_I2C_PINS / SMBUS_PORT_INIT_ADDRESS_PINS
+      SMBUS_PORT_INIT_I2C_PINS / SMBUS_PORT_INIT_ALERT_PIN /
+      SMBUS_PORT_INIT_ADDRESS_PINS
       SMBUS_PORT_READ_ADDRESS_A0 / SMBUS_PORT_READ_ADDRESS_A1
       SMBUS_PORT_READ_SCL / SMBUS_PORT_READ_SDA
       SMBUS_PORT_PREPARE_BUS_GPIO
       SMBUS_PORT_DRIVE_SCL_LOW / SMBUS_PORT_DRIVE_SCL_HIGH /
       SMBUS_PORT_DRIVE_SDA_HIGH
+      SMBUS_PORT_ALERT_ASSERT / SMBUS_PORT_ALERT_RELEASE
     - ARM Cortex-M ports typically also define SMBUS_PORT_I2C_INSTANCE,
       SMBUS_PORT_I2C_MODULE, SMBUS_PORT_I2C_IRQn, and
       SMBUS_PORT_I2C_BUS_CLOCK for smbus_io.c.
 */
 
 void smbus_io_init_i2c_pins(void);
+void smbus_io_init_alert_pin(void);
 void smbus_io_init_address_pins(void);
 
 unsigned char smbus_io_read_address_a0(void);
@@ -64,8 +69,11 @@ unsigned char smbus_io_read_sda(void);
 void smbus_io_drive_scl_low(void);
 void smbus_io_drive_scl_high(void);
 void smbus_io_drive_sda_high(void);
+void smbus_io_alert_assert(void);
+void smbus_io_alert_release(void);
 
 void smbus_io_i2c_slave_open(unsigned char slave_address);
+void smbus_io_i2c_slave_set_alias(unsigned char slot, unsigned char address_7bit, unsigned char enable_state);
 void smbus_io_i2c_interrupt(unsigned char enable_state);
 void smbus_io_i2c_irq_guard(unsigned char enable_state);
 void smbus_io_i2c_timeout(unsigned char enable_state);

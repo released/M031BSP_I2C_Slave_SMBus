@@ -4,9 +4,6 @@
 
 /*
     Active NuMicro Cortex-M port implementation.
-
-    Keep this file aligned with smbus_io_cortexm_generic.c.
-    The generic file is a reusable reference for M031 / M032 / M480 style ports.
 */
 
 static uint8_t g_smbus_i2c_next_ctrl = I2C_CTL_SI_AA;
@@ -15,6 +12,11 @@ static uint8_t g_smbus_i2c_primary_address_7bit;
 void smbus_io_init_i2c_pins(void)
 {
     SMBUS_PORT_INIT_I2C_PINS();
+}
+
+void smbus_io_init_alert_pin(void)
+{
+    SMBUS_PORT_INIT_ALERT_PIN();
 }
 
 void smbus_io_init_address_pins(void)
@@ -60,6 +62,16 @@ void smbus_io_drive_sda_high(void)
     SMBUS_PORT_DRIVE_SDA_HIGH();
 }
 
+void smbus_io_alert_assert(void)
+{
+    SMBUS_PORT_ALERT_ASSERT();
+}
+
+void smbus_io_alert_release(void)
+{
+    SMBUS_PORT_ALERT_RELEASE();
+}
+
 void smbus_io_i2c_slave_open(unsigned char slave_address)
 {
     uint32_t address_7bit;
@@ -74,6 +86,28 @@ void smbus_io_i2c_slave_open(unsigned char slave_address)
     I2C_SetSlaveAddrMask(SMBUS_PORT_I2C_INSTANCE, 0U, 0U);
     I2C_SET_CONTROL_REG(SMBUS_PORT_I2C_INSTANCE, I2C_CTL_SI_AA);
     g_smbus_i2c_next_ctrl = I2C_CTL_SI_AA;
+}
+
+void smbus_io_i2c_slave_set_alias(unsigned char slot, unsigned char address_7bit, unsigned char enable_state)
+{
+    uint8_t alias_address;
+
+    if ((slot == SMBUS_I2C_ALIAS_SLOT_DISABLED) || (slot > 3U))
+    {
+        return;
+    }
+
+    if (enable_state == Enable)
+    {
+        alias_address = (uint8_t)(address_7bit & 0x7FU);
+        I2C_SetSlaveAddr(SMBUS_PORT_I2C_INSTANCE, slot, alias_address, 0U);
+        I2C_SetSlaveAddrMask(SMBUS_PORT_I2C_INSTANCE, slot, 0U);
+    }
+    else
+    {
+        I2C_SetSlaveAddr(SMBUS_PORT_I2C_INSTANCE, slot, 0x7FU, 0U);
+        I2C_SetSlaveAddrMask(SMBUS_PORT_I2C_INSTANCE, slot, 0U);
+    }
 }
 
 void smbus_io_i2c_interrupt(unsigned char enable_state)

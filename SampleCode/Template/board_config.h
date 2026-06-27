@@ -36,6 +36,21 @@
 
 #define SMBUS_DEBUG_PRINT                          printf
 
+/*
+    Optional SMBALERT# side-band pin.
+
+    The SMBus core exposes assert/release transport helpers only. The selected
+    upper-layer protocol decides whether a fault is active and when ALERT# can
+    be released.
+*/
+#define SMBUS_PORT_ALERT_PIN_NAME                  "PB6/SMBALERT#"
+#define SMBUS_PORT_INIT_ALERT_PIN()                do { \
+                                                        GPIO_SetMode(PB, BIT6, GPIO_MODE_OPEN_DRAIN); \
+                                                        PB6 = 1; \
+                                                    } while (0)
+#define SMBUS_PORT_ALERT_ASSERT()                  do { PB6 = 0; } while (0)
+#define SMBUS_PORT_ALERT_RELEASE()                 do { PB6 = 1; } while (0)
+
 #if (SMBUS_PORT_OPTION == SMBUS_PORT_OPTION_M031_I2C0_PB4_PB5)
 
 #define SMBUS_PORT_I2C_NAME                        "I2C0"

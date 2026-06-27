@@ -21,7 +21,8 @@ typedef enum
     SMBUS_DEBUG_EVENT_RECOVER_FAIL,
     SMBUS_DEBUG_EVENT_CLOCK_LOW_TIMEOUT,
     SMBUS_DEBUG_EVENT_QUICK_WRITE,
-    SMBUS_DEBUG_EVENT_QUICK_READ
+    SMBUS_DEBUG_EVENT_QUICK_READ,
+    SMBUS_DEBUG_EVENT_ARA_ALIAS
 } smbus_debug_event_id_t;
 
 typedef enum
@@ -39,6 +40,12 @@ typedef enum
     SMBUS_FRAME_CLASS_READ_ONLY,
     SMBUS_FRAME_CLASS_AMBIGUOUS
 } smbus_frame_class_t;
+
+typedef enum
+{
+    SMBUS_REQUEST_TARGET_NORMAL = 0,
+    SMBUS_REQUEST_TARGET_ARA
+} smbus_request_target_t;
 
 typedef enum
 {
@@ -87,9 +94,15 @@ static volatile uint32_t g_write_frame_pending_tick;
 static volatile uint8_t g_last_command;
 static volatile uint8_t g_last_command_valid;
 static volatile uint8_t g_last_read_used_pec;
+static volatile uint8_t g_primary_slave_address_7bit;
 static volatile uint8_t g_current_slave_address_7bit;
 static volatile uint8_t g_request_address_7bit;
+static volatile uint8_t g_request_target;
 static volatile uint8_t g_pending_request_address_7bit;
+static volatile uint8_t g_pending_request_target;
+static volatile uint8_t g_alert_asserted;
+static volatile uint8_t g_ara_alias_active;
+static volatile uint8_t g_ara_alias_inhibit;
 static volatile uint8_t g_tx_finish_bus_error_guard;
 static volatile uint8_t g_recover_pending;
 static volatile uint8_t g_recover_reason;
@@ -137,9 +150,13 @@ static void smbus_drv_reset_tx(void);
 static void smbus_drv_reset_rx(void);
 static uint8_t smbus_drv_detect_slave_address_7bit(void);
 static void smbus_drv_set_active_address(uint8_t address_7bit);
-static void smbus_drv_update_request_address(void);
+static void smbus_drv_configure_alias_addresses(void);
+static void smbus_drv_restore_normal_address(void);
+static void smbus_drv_update_request_target(void);
 static void smbus_drv_save_pending_request_context(void);
 static void smbus_drv_restore_pending_request_context(void);
+static void smbus_drv_prepare_ara_response(void);
+static void smbus_drv_update_ara_alias_state(void);
 static uint8_t smbus_drv_bus_lines_released(void);
 static uint8_t smbus_drv_bus_clear(void);
 static uint8_t smbus_drv_recover_bus(void);
@@ -583,7 +600,28 @@ static void smbus_drv_set_active_address(uint8_t address_7bit)
     smbus_io_i2c_slave_open(SMBUS_ADDRESS_7BIT_TO_WRITE(address_7bit));
 }
 
-static void smbus_drv_update_request_address(void)
+static void smbus_drv_configure_alias_addresses(void)
+{
+#if SMBUS_ENABLE_ARA_ALIAS
+    if ((g_alert_asserted != 0U) && (g_ara_alias_inhibit == 0U))
+    {
+        smbus_io_i2c_slave_set_alias(SMBUS_I2C_ALIAS_SLOT_ARA, SMBUS_ALERT_RESPONSE_ADDRESS_7BIT, Enable);
+    }
+    else
+    {
+        smbus_io_i2c_slave_set_alias(SMBUS_I2C_ALIAS_SLOT_ARA, SMBUS_ALERT_RESPONSE_ADDRESS_7BIT, Disable);
+    }
+#endif
+}
+
+static void smbus_drv_restore_normal_address(void)
+{
+    g_ara_alias_active = 0U;
+    smbus_drv_set_active_address(g_primary_slave_address_7bit);
+    smbus_drv_configure_alias_addresses();
+}
+
+static void smbus_drv_update_request_target(void)
 {
     uint8_t address_7bit;
 
@@ -594,16 +632,97 @@ static void smbus_drv_update_request_address(void)
     }
 
     g_request_address_7bit = address_7bit;
+    g_request_target = SMBUS_REQUEST_TARGET_NORMAL;
+    if (address_7bit == SMBUS_ALERT_RESPONSE_ADDRESS_7BIT)
+    {
+        g_request_target = SMBUS_REQUEST_TARGET_ARA;
+    }
 }
 
 static void smbus_drv_save_pending_request_context(void)
 {
     g_pending_request_address_7bit = g_request_address_7bit;
+    g_pending_request_target = g_request_target;
 }
 
 static void smbus_drv_restore_pending_request_context(void)
 {
     g_request_address_7bit = g_pending_request_address_7bit;
+    g_request_target = g_pending_request_target;
+}
+
+static void smbus_drv_prepare_ara_response(void)
+{
+    uint8_t response_address;
+    uint8_t crc;
+
+    response_address = SMBUS_ADDRESS_7BIT_TO_WRITE(g_primary_slave_address_7bit);
+    crc = 0U;
+    crc = smbus_pec_update(crc, SMBUS_ADDRESS_7BIT_TO_READ(SMBUS_ALERT_RESPONSE_ADDRESS_7BIT));
+    crc = smbus_pec_update(crc, response_address);
+
+    /*
+        SMBus ARA returns the alerting device address. Provide a second byte
+        containing PEC so hosts may read either one byte without PEC or two
+        bytes with PEC before NACK/STOP ends the ARA transaction.
+    */
+    g_tx_buffer[0] = response_address;
+    g_tx_buffer[1] = crc;
+    g_tx_length = 2U;
+    g_tx_index = 0U;
+    g_last_read_used_pec = 1U;
+    smbus_drv_capture_debug_tx(0U,
+        (uint8_t)SMBUS_PROTOCOL_RECEIVE_BYTE,
+        0U,
+        g_last_read_used_pec);
+}
+
+static void smbus_drv_update_ara_alias_state(void)
+{
+#if SMBUS_ENABLE_ARA_ALIAS
+    if ((g_recover_pending != 0U) || (g_recover_state != SMBUS_RECOVER_STATE_IDLE))
+    {
+        if (g_ara_alias_active != 0U)
+        {
+#if SMBUS_I2C_ALIAS_SLOT_ARA == SMBUS_I2C_ALIAS_SLOT_DISABLED
+            smbus_drv_restore_normal_address();
+#else
+            g_ara_alias_active = 0U;
+            smbus_drv_configure_alias_addresses();
+#endif
+            smbus_drv_queue_event(SMBUS_DEBUG_EVENT_ARA_ALIAS, g_primary_slave_address_7bit, 0U);
+        }
+        return;
+    }
+
+    if (g_alert_asserted != 0U)
+    {
+        if ((g_ara_alias_active == 0U) && (g_ara_alias_inhibit == 0U))
+        {
+            g_ara_alias_active = 1U;
+#if SMBUS_I2C_ALIAS_SLOT_ARA == SMBUS_I2C_ALIAS_SLOT_DISABLED
+            smbus_drv_set_active_address(SMBUS_ALERT_RESPONSE_ADDRESS_7BIT);
+#else
+            smbus_drv_configure_alias_addresses();
+#endif
+            smbus_drv_queue_event(SMBUS_DEBUG_EVENT_ARA_ALIAS, SMBUS_ALERT_RESPONSE_ADDRESS_7BIT, 1U);
+        }
+    }
+    else
+    {
+        g_ara_alias_inhibit = 0U;
+        if (g_ara_alias_active != 0U)
+        {
+#if SMBUS_I2C_ALIAS_SLOT_ARA == SMBUS_I2C_ALIAS_SLOT_DISABLED
+            smbus_drv_restore_normal_address();
+#else
+            g_ara_alias_active = 0U;
+            smbus_drv_configure_alias_addresses();
+#endif
+            smbus_drv_queue_event(SMBUS_DEBUG_EVENT_ARA_ALIAS, g_primary_slave_address_7bit, 0U);
+        }
+    }
+#endif
 }
 
 static uint8_t smbus_drv_bus_lines_released(void)
@@ -961,6 +1080,13 @@ static void smbus_drv_prepare_default_read(void)
 
     transaction = &g_dispatch_transaction;
     tx_length = 0U;
+
+    if (g_request_target == SMBUS_REQUEST_TARGET_ARA)
+    {
+        smbus_drv_prepare_ara_response();
+        return;
+    }
+
     transaction->command = 0U;
     transaction->data_len = 0U;
     transaction->repeated_start = 0U;
@@ -1000,6 +1126,14 @@ static void smbus_drv_process_frame(uint8_t repeated_start)
     uint8_t command_length_without_pec;
 
     transaction = &g_dispatch_transaction;
+
+    if (g_request_target == SMBUS_REQUEST_TARGET_ARA)
+    {
+        smbus_drv_prepare_ara_response();
+        g_write_frame_pending = 0U;
+        g_write_frame_pending_tick = 0UL;
+        return;
+    }
 
     if (g_rx_length == 0U)
     {
@@ -1158,8 +1292,10 @@ void smbus_drv_init(void)
     uint8_t index;
 
     smbus_io_init_i2c_pins();
+    smbus_io_init_alert_pin();
     smbus_pec_init();
     smbus_dispatch_init();
+    smbus_io_alert_release();
 
 #if (SMBUS_SAMPLE_PROFILE == SMBUS_SAMPLE_PROFILE_UBM)
     g_current_slave_address_7bit = SMBUS_UBM_CONTROLLER_ADDRESS_7BIT;
@@ -1172,8 +1308,14 @@ void smbus_drv_init(void)
         smbus_drv_set_error(SMBUS_ERROR_COMMUNICATION);
     }
 
+    g_primary_slave_address_7bit = g_current_slave_address_7bit;
     g_request_address_7bit = g_current_slave_address_7bit;
+    g_request_target = SMBUS_REQUEST_TARGET_NORMAL;
     g_pending_request_address_7bit = g_current_slave_address_7bit;
+    g_pending_request_target = SMBUS_REQUEST_TARGET_NORMAL;
+    g_alert_asserted = 0U;
+    g_ara_alias_active = 0U;
+    g_ara_alias_inhibit = 0U;
     g_tx_finish_bus_error_guard = 0U;
     g_recover_pending = 0U;
     g_recover_reason = SMBUS_RECOVER_REASON_NONE;
@@ -1214,6 +1356,7 @@ void smbus_drv_init(void)
     }
 
     smbus_drv_set_active_address(g_current_slave_address_7bit);
+    smbus_drv_configure_alias_addresses();
     smbus_io_i2c_timeout(Disable);
     smbus_io_i2c_clear_timeout_flag();
     smbus_io_i2c_interrupt(Enable);
@@ -1233,11 +1376,35 @@ void smbus_drv_timer_1ms(void)
     smbus_io_i2c_irq_guard(Enable);
 }
 
+void smbus_drv_assert_alert(void)
+{
+#if SMBUS_ENABLE_ALERT_SERVICE
+    g_alert_asserted = 1U;
+    smbus_io_alert_assert();
+#endif
+}
+
+void smbus_drv_release_alert(void)
+{
+#if SMBUS_ENABLE_ALERT_SERVICE
+    g_alert_asserted = 0U;
+    smbus_io_alert_release();
+    g_ara_alias_inhibit = 0U;
+#endif
+}
+
+unsigned char smbus_drv_is_alert_asserted(void)
+{
+    return g_alert_asserted;
+}
+
 void smbus_drv_background_task(void)
 {
     smbus_debug_event_t event;
     uint8_t recover_reason;
     uint8_t recover_success;
+
+    smbus_drv_update_ara_alias_state();
 
     if (g_recover_pending != 0U)
     {
@@ -1416,6 +1583,12 @@ void smbus_drv_background_task(void)
                 SMBUS_DEBUG_PRINT("SMBus quick read addr7=0x%02X\r\n", (unsigned int)event.value0);
                 break;
 
+            case SMBUS_DEBUG_EVENT_ARA_ALIAS:
+                SMBUS_DEBUG_PRINT("SMBus ARA alias addr7=0x%02X state=%u\r\n",
+                    (unsigned int)event.value0,
+                    (unsigned int)event.value1);
+                break;
+
             default:
                 break;
         }
@@ -1461,7 +1634,7 @@ SMBUS_PORT_I2C_ISR_PROTOTYPE
                 g_write_frame_pending = 0U;
                 g_write_frame_pending_tick = 0UL;
             }
-            smbus_drv_update_request_address();
+            smbus_drv_update_request_target();
             smbus_drv_reset_rx();
             smbus_drv_reset_tx();
             g_write_frame_pending_tick = 0UL;
@@ -1537,7 +1710,7 @@ SMBUS_PORT_I2C_ISR_PROTOTYPE
             break;
 
         case SMBUS_I2C_STATUS_SLA_R_ACK:
-            smbus_drv_update_request_address();
+            smbus_drv_update_request_target();
             if ((g_write_frame_pending != 0U) || (g_rx_length > 0U))
             {
                 if (g_write_frame_pending != 0U)
@@ -1570,7 +1743,14 @@ SMBUS_PORT_I2C_ISR_PROTOTYPE
             g_tx_finish_bus_error_guard = 0U;
             smbus_drv_commit_debug_tx();
             smbus_drv_load_next_tx_byte();
-            smbus_io_i2c_set_ack();
+            if ((g_request_target == SMBUS_REQUEST_TARGET_ARA) && (g_tx_index >= g_tx_length))
+            {
+                smbus_io_i2c_clear_ack();
+            }
+            else
+            {
+                smbus_io_i2c_set_ack();
+            }
             smbus_io_i2c_disable_timeout_counter();
             break;
 
@@ -1584,7 +1764,27 @@ SMBUS_PORT_I2C_ISR_PROTOTYPE
             g_write_frame_pending_tick = 0UL;
             smbus_io_i2c_set_ack();
             smbus_io_i2c_disable_timeout_counter();
-            g_request_address_7bit = g_current_slave_address_7bit;
+            if (g_request_target == SMBUS_REQUEST_TARGET_ARA)
+            {
+#if SMBUS_I2C_ALIAS_SLOT_ARA == SMBUS_I2C_ALIAS_SLOT_DISABLED
+                /*
+                    Restore the normal address after ARA when only one slave
+                    address can be active. This is an address guard only;
+                    ALERT# remains controlled by the upper-layer protocol.
+                */
+                g_ara_alias_inhibit = 1U;
+                smbus_drv_restore_normal_address();
+                smbus_drv_queue_event(SMBUS_DEBUG_EVENT_ARA_ALIAS, g_primary_slave_address_7bit, 0U);
+#else
+                /*
+                    With a real alias slot, keep ARA available while the
+                    upper-layer protocol keeps ALERT# asserted.
+                */
+                smbus_drv_configure_alias_addresses();
+#endif
+            }
+            g_request_target = SMBUS_REQUEST_TARGET_NORMAL;
+            g_request_address_7bit = g_primary_slave_address_7bit;
             break;
 
         case SMBUS_I2C_STATUS_BUS_ERROR:

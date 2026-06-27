@@ -22,6 +22,26 @@
 #define SMBUS_ADDRESS_7BIT_TO_READ(addr7)     ((unsigned char)(((addr7) << 1) | 0x01U))
 
 /*
+    SMBALERT# / ARA transport service.
+
+    The SMBus layer owns only the physical ALERT# drive/release service and
+    optional ARA address transport. It must not decide when an alert should be
+    released. Upper-layer protocols such as UBM, VPP, Smart Battery, or PMBus
+    must own the actual fault/status policy.
+*/
+#define SMBUS_ALERT_RESPONSE_ADDRESS_7BIT     0x0CU
+#define SMBUS_I2C_ALIAS_SLOT_DISABLED         0xFFU
+#ifndef SMBUS_ENABLE_ALERT_SERVICE
+#define SMBUS_ENABLE_ALERT_SERVICE            1U
+#endif
+#ifndef SMBUS_ENABLE_ARA_ALIAS
+#define SMBUS_ENABLE_ARA_ALIAS                SMBUS_ENABLE_ALERT_SERVICE
+#endif
+#ifndef SMBUS_I2C_ALIAS_SLOT_ARA
+#define SMBUS_I2C_ALIAS_SLOT_ARA              1U
+#endif
+
+/*
     Sample command profile selection.
 
     GENERIC keeps the workspace as a pure SMBus transaction-layer example.
