@@ -774,8 +774,8 @@ Buffer and recovery settings:
 | `SMBUS_RX_BUFFER_SIZE` | `40U` | Fixed RX buffer size. |
 | `SMBUS_TX_BUFFER_SIZE` | `40U` | Fixed TX buffer size, sized for 32-byte SMBus block data plus UBM descriptor/checksum headroom. |
 | `SMBUS_MAX_BLOCK_SIZE` | `32U` | Maximum SMBus block payload length. |
-| `SMBUS_DEBUG_QUEUE_SIZE` | `96U` | Background debug event queue depth. |
-| `SMBUS_DEBUG_FRAME_QUEUE_SIZE` | `32U` | RX frame snapshot queue depth. |
+| `SMBUS_DEBUG_QUEUE_SIZE` | `64U` | Background debug event queue depth. |
+| `SMBUS_DEBUG_FRAME_QUEUE_SIZE` | `16U` | RX frame snapshot queue depth. |
 | `SMBUS_DEBUG_TX_QUEUE_SIZE` | `16U` | TX response snapshot queue depth. |
 | `SMBUS_ENABLE_SLAVE_RECOVER` | `1U` | Enables stuck-bus / timeout recovery path. |
 | `SMBUS_I2C_CLOCK_LOW_TIMEOUT_MS` | `35U` | Software SCL-low timeout threshold sampled from the 1 ms timer ISR. |

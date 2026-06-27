@@ -69,8 +69,8 @@
 #define SMBUS_RX_BUFFER_SIZE                  40U
 #define SMBUS_TX_BUFFER_SIZE                  40U
 #define SMBUS_MAX_BLOCK_SIZE                  32U
-#define SMBUS_DEBUG_QUEUE_SIZE                96U
-#define SMBUS_DEBUG_FRAME_QUEUE_SIZE          32U
+#define SMBUS_DEBUG_QUEUE_SIZE                64U
+#define SMBUS_DEBUG_FRAME_QUEUE_SIZE          16U
 #define SMBUS_DEBUG_TX_QUEUE_SIZE             16U
 
 #define SMBUS_PEC_POLICY_DISABLED             0U
