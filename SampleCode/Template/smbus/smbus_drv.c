@@ -69,6 +69,7 @@ typedef struct
 
 typedef struct
 {
+    uint8_t address_7bit;
     uint8_t command;
     uint8_t protocol;
     uint8_t command_length;
@@ -128,7 +129,7 @@ static void smbus_drv_commit_debug_tx(void);
 static uint8_t smbus_drv_pending_debug_tx_is_read_only(void);
 static void smbus_drv_discard_debug_tx(void);
 static void smbus_drv_print_debug_tx(const smbus_debug_tx_snapshot_t *snapshot);
-static const char *smbus_drv_get_command_name(uint8_t command);
+static const char *smbus_drv_get_command_name(uint8_t address_7bit, uint8_t command);
 static const char *smbus_drv_get_protocol_name(uint8_t protocol);
 static void smbus_drv_queue_event(uint8_t event_id, uint8_t value0, uint8_t value1);
 static void smbus_drv_set_error(uint8_t error_mask);
@@ -147,7 +148,7 @@ static void smbus_drv_reset_clock_low_monitor(void);
 static void smbus_drv_check_clock_low_timeout_1ms(void);
 static void smbus_drv_append_tx_pec(uint8_t command_length);
 static void smbus_drv_append_read_only_tx_pec(uint8_t address_7bit);
-static uint8_t smbus_drv_should_append_read_pec(uint8_t repeated_start);
+static uint8_t smbus_drv_should_append_read_pec(uint8_t address_7bit, uint8_t repeated_start);
 static void smbus_drv_load_next_tx_byte(void);
 static uint8_t smbus_drv_compute_write_pec(uint8_t frame_length_without_pec);
 static smbus_frame_class_t smbus_drv_classify_current_frame(void);
@@ -248,34 +249,9 @@ static void smbus_drv_capture_debug_frame(uint8_t raw_length, smbus_dispatch_tra
 #endif
 }
 
-static const char *smbus_drv_get_command_name(uint8_t command)
+static const char *smbus_drv_get_command_name(uint8_t address_7bit, uint8_t command)
 {
-    switch (command)
-    {
-        case 0x10U: return "SMB_EXAMPLE_SEND_BYTE_A";
-        case 0x11U: return "SMB_EXAMPLE_SEND_BYTE_B";
-        case 0x12U: return "SMB_EXAMPLE_RECEIVE_SELECT_A";
-        case 0x13U: return "SMB_EXAMPLE_RECEIVE_SELECT_B";
-        case 0x20U: return "SMB_EXAMPLE_WRITE_BYTE_A";
-        case 0x21U: return "SMB_EXAMPLE_WRITE_BYTE_B";
-        case 0x22U: return "SMB_EXAMPLE_READ_BYTE_A";
-        case 0x23U: return "SMB_EXAMPLE_READ_BYTE_B";
-        case 0x30U: return "SMB_EXAMPLE_WRITE_WORD_A";
-        case 0x31U: return "SMB_EXAMPLE_WRITE_WORD_B";
-        case 0x32U: return "SMB_EXAMPLE_READ_WORD_A";
-        case 0x33U: return "SMB_EXAMPLE_READ_WORD_B";
-        case 0x40U: return "SMB_EXAMPLE_BLOCK_WRITE_A";
-        case 0x41U: return "SMB_EXAMPLE_BLOCK_WRITE_B";
-        case 0x42U: return "SMB_EXAMPLE_BLOCK_READ_A";
-        case 0x43U: return "SMB_EXAMPLE_BLOCK_READ_B";
-        case 0x50U: return "SMB_EXAMPLE_PROCESS_CALL_A";
-        case 0x51U: return "SMB_EXAMPLE_PROCESS_CALL_B";
-        case 0x60U: return "SMB_EXAMPLE_BLOCK_PROC_CALL_A";
-        case 0x61U: return "SMB_EXAMPLE_BLOCK_PROC_CALL_B";
-        default: break;
-    }
-
-    return "UNKNOWN";
+    return smbus_dispatch_get_command_name(address_7bit, command);
 }
 
 static const char *smbus_drv_get_protocol_name(uint8_t protocol)
@@ -292,6 +268,8 @@ static const char *smbus_drv_get_protocol_name(uint8_t protocol)
         case SMBUS_PROTOCOL_BLOCK_READ: return "BLOCK_READ";
         case SMBUS_PROTOCOL_PROCESS_CALL: return "PROCESS_CALL";
         case SMBUS_PROTOCOL_BLOCK_WRITE_READ_PROCESS_CALL: return "BLOCK_WRITE_READ_PROCESS_CALL";
+        case SMBUS_PROTOCOL_UBM_CONTROLLER_READ: return "UBM_CONTROLLER_READ";
+        case SMBUS_PROTOCOL_UBM_CONTROLLER_WRITE: return "UBM_CONTROLLER_WRITE";
         default: break;
     }
 
@@ -311,7 +289,7 @@ static void smbus_drv_print_debug_frame(const smbus_debug_frame_snapshot_t *snap
     {
         command = snapshot->raw[0];
     }
-    command_name = smbus_drv_get_command_name(command);
+    command_name = smbus_drv_get_command_name(snapshot->address_7bit, command);
     address_byte = SMBUS_ADDRESS_7BIT_TO_WRITE(snapshot->address_7bit);
 
     SMBUS_DEBUG_PRINT("SMBus RX cmd=0x%02X (%s) raw=%u payload=%u proto=%u rs=%u pec=%u valid=%u\r\n",
@@ -353,8 +331,8 @@ static uint8_t smbus_drv_compute_tx_pec(const smbus_debug_tx_snapshot_t *snapsho
     }
 
     tx_data_length = (uint8_t)(snapshot->raw_len - 1U);
-    device_write_address = SMBUS_ADDRESS_7BIT_TO_WRITE(g_request_address_7bit);
-    device_read_address = SMBUS_ADDRESS_7BIT_TO_READ(g_request_address_7bit);
+    device_write_address = SMBUS_ADDRESS_7BIT_TO_WRITE(snapshot->address_7bit);
+    device_read_address = SMBUS_ADDRESS_7BIT_TO_READ(snapshot->address_7bit);
 
     crc = 0U;
     if ((snapshot->protocol == SMBUS_PROTOCOL_RECEIVE_BYTE) && (snapshot->command_length == 0U))
@@ -387,6 +365,7 @@ static void smbus_drv_capture_debug_tx(uint8_t command, uint8_t protocol, uint8_
     smbus_debug_tx_snapshot_t *snapshot;
 
     snapshot = &g_debug_tx_pending_snapshot;
+    snapshot->address_7bit = g_request_address_7bit;
     snapshot->command = command;
     snapshot->protocol = protocol;
     snapshot->pec_present = pec_present;
@@ -451,6 +430,7 @@ static void smbus_drv_commit_debug_tx(void)
     }
 
     snapshot = &g_debug_tx_queue[g_debug_tx_head];
+    snapshot->address_7bit = g_debug_tx_pending_snapshot.address_7bit;
     snapshot->command = g_debug_tx_pending_snapshot.command;
     snapshot->protocol = g_debug_tx_pending_snapshot.protocol;
     snapshot->pec_present = g_debug_tx_pending_snapshot.pec_present;
@@ -509,7 +489,7 @@ static void smbus_drv_print_debug_tx(const smbus_debug_tx_snapshot_t *snapshot)
     uint8_t print_length;
     uint8_t index;
 
-    command_name = smbus_drv_get_command_name(snapshot->command);
+    command_name = smbus_drv_get_command_name(snapshot->address_7bit, snapshot->command);
     protocol_name = smbus_drv_get_protocol_name(snapshot->protocol);
     SMBUS_DEBUG_PRINT("SMBus TX cmd=0x%02X (%s) proto=%u (%s) len=%u ",
         (unsigned int)snapshot->command,
@@ -851,14 +831,19 @@ static void smbus_drv_append_read_only_tx_pec(uint8_t address_7bit)
 #endif
 }
 
-static uint8_t smbus_drv_should_append_read_pec(uint8_t repeated_start)
+static uint8_t smbus_drv_should_append_read_pec(uint8_t address_7bit, uint8_t repeated_start)
 {
 #if SMBUS_ENABLE_PEC
+    if (smbus_dispatch_uses_smbus_pec(address_7bit) == 0U)
+    {
+        return 0U;
+    }
     if (repeated_start != 0U)
     {
         return 1U;
     }
 #else
+    address_7bit = address_7bit;
     repeated_start = repeated_start;
 #endif
 
@@ -922,13 +907,13 @@ static smbus_frame_class_t smbus_drv_classify_current_frame(void)
     has_write_path = 0U;
     has_read_path = 0U;
 
-    protocol_no_pec = smbus_dispatch_detect_protocol(command, data_len, &g_rx_buffer[1], 0U);
+    protocol_no_pec = smbus_dispatch_detect_protocol(g_request_address_7bit, command, data_len, &g_rx_buffer[1], 0U);
     if (protocol_no_pec != SMBUS_PROTOCOL_UNKNOWN)
     {
         has_write_path = 1U;
     }
 
-    read_protocol_no_pec = smbus_dispatch_detect_protocol(command, data_len, &g_rx_buffer[1], 1U);
+    read_protocol_no_pec = smbus_dispatch_detect_protocol(g_request_address_7bit, command, data_len, &g_rx_buffer[1], 1U);
     if (read_protocol_no_pec != SMBUS_PROTOCOL_UNKNOWN)
     {
         has_read_path = 1U;
@@ -938,13 +923,13 @@ static smbus_frame_class_t smbus_drv_classify_current_frame(void)
     {
         candidate_length = (uint8_t)(data_len - 1U);
 
-        protocol_with_pec = smbus_dispatch_detect_protocol(command, candidate_length, &g_rx_buffer[1], 0U);
+        protocol_with_pec = smbus_dispatch_detect_protocol(g_request_address_7bit, command, candidate_length, &g_rx_buffer[1], 0U);
         if (protocol_with_pec != SMBUS_PROTOCOL_UNKNOWN)
         {
             has_write_path = 1U;
         }
 
-        read_protocol_with_pec = smbus_dispatch_detect_protocol(command, candidate_length, &g_rx_buffer[1], 1U);
+        read_protocol_with_pec = smbus_dispatch_detect_protocol(g_request_address_7bit, command, candidate_length, &g_rx_buffer[1], 1U);
         if (read_protocol_with_pec != SMBUS_PROTOCOL_UNKNOWN)
         {
             has_read_path = 1U;
@@ -987,7 +972,7 @@ static void smbus_drv_prepare_default_read(void)
     g_tx_length = tx_length;
     g_tx_index = 0U;
 
-    if (smbus_drv_should_append_read_pec(1U) != 0U)
+    if (smbus_drv_should_append_read_pec(g_request_address_7bit, 1U) != 0U)
     {
         g_last_read_used_pec = 1U;
         smbus_drv_append_read_only_tx_pec(g_request_address_7bit);
@@ -1030,16 +1015,18 @@ static void smbus_drv_process_frame(uint8_t repeated_start)
     transaction->pec_valid = 1U;
     transaction->data_len = (uint8_t)(g_rx_length - 1U);
 
-    protocol_no_pec = smbus_dispatch_detect_protocol(transaction->command, transaction->data_len, &g_rx_buffer[1], repeated_start);
+    transaction->address_7bit = g_request_address_7bit;
+    protocol_no_pec = smbus_dispatch_detect_protocol(transaction->address_7bit, transaction->command, transaction->data_len, &g_rx_buffer[1], repeated_start);
     protocol_with_pec = SMBUS_PROTOCOL_UNKNOWN;
     used_pec = 0U;
     valid_pec = 1U;
 
 #if SMBUS_ENABLE_PEC
-    if (transaction->data_len > 0U)
+    if ((smbus_dispatch_uses_smbus_pec(transaction->address_7bit) != 0U) &&
+        (transaction->data_len > 0U))
     {
         candidate_length = (uint8_t)(transaction->data_len - 1U);
-        protocol_with_pec = smbus_dispatch_detect_protocol(transaction->command, candidate_length, &g_rx_buffer[1], repeated_start);
+        protocol_with_pec = smbus_dispatch_detect_protocol(transaction->address_7bit, transaction->command, candidate_length, &g_rx_buffer[1], repeated_start);
 
         if (protocol_with_pec != SMBUS_PROTOCOL_UNKNOWN)
         {
@@ -1062,7 +1049,8 @@ static void smbus_drv_process_frame(uint8_t repeated_start)
         }
     }
 
-    if ((repeated_start == 0U) &&
+    if ((smbus_dispatch_uses_smbus_pec(transaction->address_7bit) != 0U) &&
+        (repeated_start == 0U) &&
         (SMBUS_PEC_POLICY == SMBUS_PEC_POLICY_REQUIRED) &&
         (used_pec == 0U))
     {
@@ -1076,7 +1064,7 @@ static void smbus_drv_process_frame(uint8_t repeated_start)
 
     transaction->pec_present = used_pec;
     transaction->pec_valid = valid_pec;
-    transaction->protocol = smbus_dispatch_detect_protocol(transaction->command, transaction->data_len, &g_rx_buffer[1], repeated_start);
+    transaction->protocol = smbus_dispatch_detect_protocol(transaction->address_7bit, transaction->command, transaction->data_len, &g_rx_buffer[1], repeated_start);
 
     if (transaction->data_len > (SMBUS_MAX_BLOCK_SIZE + 1U))
     {
@@ -1115,7 +1103,7 @@ static void smbus_drv_process_frame(uint8_t repeated_start)
 
     if (transaction->protocol == SMBUS_PROTOCOL_UNKNOWN)
     {
-        if (smbus_dispatch_is_known_command(transaction->command) != 0U)
+        if (smbus_dispatch_is_known_command(transaction->address_7bit, transaction->command) != 0U)
         {
             smbus_drv_set_error(SMBUS_ERROR_UNSUPPORTED_DATA);
         }
@@ -1143,7 +1131,7 @@ static void smbus_drv_process_frame(uint8_t repeated_start)
     g_tx_index = 0U;
     command_length_without_pec = (uint8_t)(g_rx_length - ((used_pec != 0U) ? 1U : 0U));
 
-    if ((repeated_start != 0U) && (smbus_drv_should_append_read_pec(repeated_start) != 0U))
+    if ((repeated_start != 0U) && (smbus_drv_should_append_read_pec(transaction->address_7bit, repeated_start) != 0U))
     {
         g_last_read_used_pec = 1U;
         smbus_drv_append_tx_pec(command_length_without_pec);
@@ -1171,8 +1159,13 @@ void smbus_drv_init(void)
 
     smbus_io_init_i2c_pins();
     smbus_pec_init();
+    smbus_dispatch_init();
 
+#if (SMBUS_SAMPLE_PROFILE == SMBUS_SAMPLE_PROFILE_UBM)
+    g_current_slave_address_7bit = SMBUS_UBM_CONTROLLER_ADDRESS_7BIT;
+#else
     g_current_slave_address_7bit = smbus_drv_detect_slave_address_7bit();
+#endif
     if ((g_current_slave_address_7bit < 0x08U) || (g_current_slave_address_7bit > 0x77U))
     {
         g_current_slave_address_7bit = SMBUS_ADDRESS_INVALID_FALLBACK_7BIT;

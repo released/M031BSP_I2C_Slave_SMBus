@@ -2,7 +2,7 @@
 
 Nuvoton M031/M032 SMBus transaction-layer slave firmware validation.
 
-Last updated: 2026/06/26
+Last updated: 2026/06/27
 
 ## Overview
 
@@ -14,6 +14,8 @@ The firmware focuses on a standards-aligned SMBus slave transport path:
 - Software SCL-low timeout sampling and bus-clear recovery
 - Runtime debug logs for RX decode and TX payload traceability
 - Deterministic example commands for a user-selected SMBus validation tool
+- Compile-time sample profile selection for Generic SMBus layer validation or
+  SFF-TA-1005 UBM Controller shell validation
 
 This workspace is a standalone SMBus transaction-layer sample. SMBus defines
 transaction forms, PEC, and timeout behavior; it does not define a product
@@ -73,8 +75,12 @@ SampleCode/Template/SMBUS_SUPPORT_MATRIX.md
 SampleCode/Template/SMBUS_VALIDATION_CHECKLIST.md
 ```
 
-The repository root also keeps LA screenshots captured from an example SMBus
-transaction validation run.
+The repository root also keeps validation logs and LA screenshots:
+
+- `teraterm_GENERIC.log`: MCU-side Generic profile validation log.
+- `teraterm_UBM.log`: MCU-side UBM Controller profile validation log.
+- `cmd_*`, `W_*`, and `R_*` images: Generic SMBus transaction LA captures.
+- `UBM_*` images: UBM Controller command LA captures.
 
 ## Build
 
@@ -138,7 +144,9 @@ x, X, z, Z -> SYS_ResetChip()
 
 ## SMBus Support
 
-The implementation is intended to validate the SMBus transaction layer only.
+The Generic profile validates the SMBus transaction layer only. The same
+transport core can also be built as an SFF-TA-1005 UBM validation shell by
+switching `SMBUS_SAMPLE_PROFILE`.
 
 Supported transaction formats include:
 
@@ -178,6 +186,84 @@ must use different command codes, but they can only use different data lengths
 when the SMBus transaction itself supports a variable-length payload. Block
 examples use 8 bytes for A and 16 bytes for B.
 
+## Profile Selection
+
+`smbus_cfg_user.h` provides two sample profiles:
+
+| Define | Meaning |
+| --- | --- |
+| `SMBUS_SAMPLE_PROFILE_GENERIC` | Pure SMBus transaction-layer examples. Use this for SMBus layer validation. |
+| `SMBUS_SAMPLE_PROFILE_UBM` | SFF-TA-1005 UBM Controller shell. |
+
+The checked-in sample configuration currently selects the UBM Controller shell:
+
+```c
+#define SMBUS_SAMPLE_PROFILE SMBUS_SAMPLE_PROFILE_UBM
+```
+
+Use the Generic profile when validating only SMBus transaction-layer behavior:
+
+```c
+#define SMBUS_SAMPLE_PROFILE SMBUS_SAMPLE_PROFILE_GENERIC
+```
+
+Use the UBM profile when validating a host/tool implementation against
+`PUBLISHED SFF-TA-1005.pdf`:
+
+```c
+#define SMBUS_SAMPLE_PROFILE SMBUS_SAMPLE_PROFILE_UBM
+```
+
+UBM profile address behavior:
+
+| UBM target | 7-bit address | 8-bit LA address | Notes |
+| --- | --- | --- | --- |
+| UBM Controller | `SMBUS_UBM_CONTROLLER_ADDRESS_7BIT`, default `0x5A` | `0xB4` write / `0xB5` read | Single active slave address in this workspace. |
+| UBM update mode shell | `SMBUS_UBM_UPDATE_ADDRESS_7BIT`, default `0x5C` | `0xB8` write / `0xB9` read | Exposed as a placeholder field for command `20h`. |
+
+The update-mode address is advertised by the `20h` shell response. This
+workspace still keeps one active slave address, the UBM Controller address, so
+the host continues to transact with `0x5A` unless product firmware explicitly
+adds a second active target.
+
+UBM Controller checksum behavior:
+
+- UBM Controller commands use the SFF-TA-1005 checksum seed `0xA5`.
+- UBM Controller write checksum covers `addr(W) + command + data`.
+- UBM Controller read command checksum covers `addr(W) + command`.
+- UBM Controller read response checksum covers response data bytes.
+- UBM Controller transactions do not use SMBus PEC.
+
+UBM Controller command shell coverage:
+
+| Command | Name | Shell behavior |
+| --- | --- | --- |
+| `00h` | Operational State | Returns READY by default. |
+| `01h` | Last Command Status | Stateful status for the previous write command. |
+| `02h` | Silicon Identity and Version | Returns deterministic 14-byte identity data. |
+| `03h` | Programming Update Mode Capabilities | Returns update-mode capability placeholder. |
+| `20h` | Enter Programmable Update Mode | Framework shell; successful unlock may move Operational State to REDUCED FUNCTIONALITY. |
+| `21h` | Programmable Mode Data Transfer | Variable-length shadow buffer for future firmware-update binding. |
+| `22h` | Exit Programmable Update Mode | Framework shell; successful exit may restore READY. |
+| `30h` | Host Facing Connector Info | Returns deterministic HFC identity data. |
+| `31h` | Backplane Info | Returns deterministic backplane data. |
+| `32h` | Starting Slot | Returns sample starting slot. |
+| `33h` | Capabilities | Returns sample capability bits, including optional CCC/Flex shell availability. |
+| `34h` | Features | Read/write shadow. |
+| `35h` | Change Count | Read/write with current-value clear semantics; mismatch sets Last Command Status `05h`. |
+| `36h` | DFC Status and Control Descriptor Index | Read/write index; invalid index sets Last Command Status `08h`. |
+| `37h` | Cable Contiguous Check | Optional command shell. |
+| `38h` | Cable Contiguous Check Result Index | Optional command shell. |
+| `40h` | DFC Status and Control Descriptor | Read/write descriptor shadow selected by `36h`. |
+| `41h` | Cable Contiguous Check Result Descriptor | Optional 35-byte descriptor shell. |
+| `50h` | Flex I/O Status and Control Descriptor Index | Optional command shell. |
+| `51h` | Flex I/O Status and Control Descriptor | Optional 5-byte descriptor shell. |
+| `60h` | Power Event Data | Optional 32-byte diagnostic shell. |
+
+The UBM shell intentionally does not drive real slot power, PERST#, RefClk,
+LED, ADC, GPIO, NVM, or firmware-update flash behavior. Product owners should
+replace the shadows with platform-owned hardware and policy bindings.
+
 Command support and validation status are tracked in:
 
 ```text
@@ -195,8 +281,9 @@ but they are not final product behavior until connected to product-owned
 commands, data sources, non-volatile storage, fault handling, or an approved
 product policy.
 
-Keep this workspace limited to generic SMBus transaction examples. Product
-command naming and product behavior should be added only in product-owned
+Keep the Generic profile limited to SMBus transaction examples. The UBM profile
+is a standards-referenced shell for SFF-TA-1005 command parsing and checksum
+validation only. Product behavior should be added only in product-owned
 firmware.
 
 ## Typical Validation Setup
@@ -215,19 +302,21 @@ Recommended validation flow:
 2. Open UART0 debug log at 115200 8N1.
 3. Connect the user-selected SMBus master host board.
 4. Open or run the user-selected SMBus validation tool.
-5. Set address to `0x5A`.
-6. Enable PEC.
+5. For `SMBUS_SAMPLE_PROFILE_GENERIC`, set address to `0x5A`, enable PEC, and run the Generic transaction-layer validation suite.
+6. For `SMBUS_SAMPLE_PROFILE_UBM`, use UBM Controller address `0x5A` by default. Do not enable SMBus PEC; UBM Controller uses the `0xA5` checksum.
 7. Enable the SMBus master path.
-8. Run the transaction-layer validation suite.
-9. Confirm the validation tool reports all expected SMBus transaction examples as passed.
-10. Confirm the MCU UART log and LA captures match expected command, protocol, PEC, and payload behavior.
+8. Run the selected validation suite.
+9. Confirm the validation tool reports all expected profile checks as passed.
+10. Confirm the MCU UART log and LA captures match expected address, command, protocol, checksum/PEC, and payload behavior.
 
 ## Expected Validation Signals
 
-The captures below use the `21:29:54` pass from the current `teraterm.log` and
-validation-tool log. The same reflashed firmware also passed the adjacent
-`21:29:52` and `21:29:55` runs with `PASS=26 FAIL=0`; the `21:29:54` pass is
-used here because its counter bytes match the included LA screenshots.
+### Generic Profile Signals
+
+The captures below are Generic profile examples from `teraterm_GENERIC.log`.
+The paired validation-tool run passed the Generic SMBus layer suite with
+`PASS=26 FAIL=0`. The existing LA screenshots in this section are therefore
+Generic-only captures.
 
 Address notation:
 
@@ -238,9 +327,9 @@ Address notation:
 - Quick Read is address-only: the LA shows `START + 0xB5 + STOP` with no
   data byte.
 
-A healthy `Run All` should pass all transaction families and the forced bad-PEC
-negative-path example. The bad-PEC transaction is expected to be `valid=0` in
-the MCU log.
+A healthy Generic `Run All` should pass all transaction families and the forced
+bad-PEC negative-path example. The bad-PEC transaction is expected to be
+`valid=0` in the MCU log.
 
 ```text
 SMBus quick write addr7=0x5A
@@ -470,6 +559,118 @@ the slave detects and reports the PEC failure.
 
 ![Forced Bad PEC Write Byte](W_20_4A_E1.jpg)
 
+### UBM Controller Profile Signals
+
+The captures below are UBM Controller profile examples from `teraterm_UBM.log`
+and the `UBM_*` LA screenshots. The paired validation-tool run passed three
+consecutive UBM `Run All` passes with `PASS=32 FAIL=0`.
+
+UBM Controller transactions use the SFF-TA-1005 checksum seed `0xA5`, not SMBus
+PEC. For LA correlation:
+
+- UBM read command phase: `addr(W) + command + command-checksum`, then repeated
+  START, then `addr(R) + response-data + response-checksum`.
+- UBM write command phase: `addr(W) + command + payload + write-checksum`.
+- Command checksum is calculated over `addr(W) + command`.
+- Write checksum is calculated over `addr(W) + command + payload`.
+- Read response checksum is calculated over the returned response bytes.
+
+The first UBM `Run All` starts with these reads:
+
+```text
+SMBus RX cmd=0x00 (UBM_OPERATIONAL_STATE) raw=2 payload=1 proto=11 rs=1 pec=0 valid=1
+address=0xB4:[0x00],[0xA7],
+SMBus TX cmd=0x00 (UBM_OPERATIONAL_STATE) proto=11 (UBM_CONTROLLER_READ) len=2 raw=03 58
+```
+
+![UBM Operational State](UBM_OPERATIONAL_STATE.jpg)
+
+
+```text
+SMBus RX cmd=0x01 (UBM_LAST_COMMAND_STATUS) raw=2 payload=1 proto=11 rs=1 pec=0 valid=1
+address=0xB4:[0x01],[0xA6],
+SMBus TX cmd=0x01 (UBM_LAST_COMMAND_STATUS) proto=11 (UBM_CONTROLLER_READ) len=2 raw=01 5A
+```
+
+![UBM Last Command Status](UBM_LAST_COMMAND_STATUS.jpg)
+
+
+```text
+SMBus RX cmd=0x02 (UBM_SILICON_IDENTITY_VERSION) raw=2 payload=1 proto=11 rs=1 pec=0 valid=1
+address=0xB4:[0x02],[0xA5],
+SMBus TX cmd=0x02 (UBM_SILICON_IDENTITY_VERSION) proto=11 (UBM_CONTROLLER_READ) len=15 raw=15 AB 10 00 32 00 00 00 00 00 00 01 55 42 C1
+```
+
+![UBM Silicon Identity Version](UBM_SILICON_IDENTITY_VERSION.jpg)
+
+
+```text
+SMBus RX cmd=0x03 (UBM_PROGRAMMING_UPDATE_MODE_CAPABILITIES) raw=2 payload=1 proto=11 rs=1 pec=0 valid=1
+address=0xB4:[0x03],[0xA4],
+SMBus TX cmd=0x03 (UBM_PROGRAMMING_UPDATE_MODE_CAPABILITIES) proto=11 (UBM_CONTROLLER_READ) len=2 raw=01 5A
+```
+
+![UBM Programming Update Mode Capabilities](UBM_PROGRAMMING_UPDATE_MODE_CAPABILITIES.jpg)
+
+
+```text
+SMBus RX cmd=0x30 (UBM_HOST_FACING_CONNECTOR_INFO) raw=2 payload=1 proto=11 rs=1 pec=0 valid=1
+address=0xB4:[0x30],[0x77],
+SMBus TX cmd=0x30 (UBM_HOST_FACING_CONNECTOR_INFO) proto=11 (UBM_CONTROLLER_READ) len=2 raw=01 5A
+```
+
+![UBM Host Facing Connector Info](UBM_HOST_FACING_CONNECTOR_INFO.jpg)
+
+
+```text
+SMBus RX cmd=0x31 (UBM_BACKPLANE_INFO) raw=2 payload=1 proto=11 rs=1 pec=0 valid=1
+address=0xB4:[0x31],[0x76],
+SMBus TX cmd=0x31 (UBM_BACKPLANE_INFO) proto=11 (UBM_CONTROLLER_READ) len=2 raw=01 5A
+```
+
+![UBM Backplane Info](UBM_BACKPLANE_INFO.jpg)
+
+
+```text
+SMBus RX cmd=0x32 (UBM_STARTING_SLOT) raw=2 payload=1 proto=11 rs=1 pec=0 valid=1
+address=0xB4:[0x32],[0x75],
+SMBus TX cmd=0x32 (UBM_STARTING_SLOT) proto=11 (UBM_CONTROLLER_READ) len=2 raw=00 5B
+```
+
+![UBM Starting Slot](UBM_STARTING_SLOT.jpg)
+
+
+```text
+SMBus RX cmd=0x33 (UBM_CAPABILITIES) raw=2 payload=1 proto=11 rs=1 pec=0 valid=1
+address=0xB4:[0x33],[0x74],
+SMBus TX cmd=0x33 (UBM_CAPABILITIES) proto=11 (UBM_CONTROLLER_READ) len=3 raw=80 60 7B
+```
+
+![UBM Capabilities](UBM_CAPABILITIES.jpg)
+
+
+```text
+SMBus RX cmd=0x34 (UBM_FEATURES) raw=2 payload=1 proto=11 rs=1 pec=0 valid=1
+address=0xB4:[0x34],[0x73],
+SMBus TX cmd=0x34 (UBM_FEATURES) proto=11 (UBM_CONTROLLER_READ) len=3 raw=00 00 5B
+```
+
+![UBM Features](UBM_FEATURES.jpg)
+
+The same UBM run also validates update-mode shell transitions and checksum
+negative behavior. The LA byte summaries for the first run are:
+
+| Validation item | LA byte summary | Expected result |
+| --- | --- | --- |
+| Enter update read shell | `W=[20 87] R=[B8 55 42 4D 00 BF]` | Returns advertised update-mode write address `0xB8` plus shell signature. |
+| Enter update write shell | `W=[20 B8 55 42 4D 01 EA]` | Accepted write; subsequent Operational State is reduced. |
+| Operational State after enter | `W=[00 A7] R=[04 57]` | `0x04` REDUCED FUNCTIONALITY. |
+| PMDT write shell | `W=[21 00 02 AA 55 85]` | Accepted programmable-mode data shadow write. |
+| Exit update read shell | `W=[22 85] R=[55 42 4D 00 77]` | Returns exit shell signature. |
+| Exit update write shell | `W=[22 55 42 4D 01 A0]` | Accepted write; subsequent Operational State is ready. |
+| Operational State after exit | `W=[00 A7] R=[03 58]` | `0x03` READY. |
+| Bad checksum negative | `W=[34 00 00 8C]` then `W=[01 A6] R=[02 59]` | Last Command Status becomes `0x02` INVALID_CHECKSUM. |
+
 ## Configuration Files
 
 Primary configuration points:
@@ -501,6 +702,18 @@ Address settings:
 | `SMBUS_ADDRESS_7BIT_TO_WRITE(addr7)` | `(addr7 << 1)` | Converts a 7-bit address to the 8-bit write address shown by LA tools. |
 | `SMBUS_ADDRESS_7BIT_TO_READ(addr7)` | `((addr7 << 1) | 1)` | Converts a 7-bit address to the 8-bit read address shown by LA tools. |
 
+Profile and UBM settings:
+
+| Define | Default | Purpose |
+| --- | --- | --- |
+| `SMBUS_SAMPLE_PROFILE_GENERIC` | `0U` | Builds the pure SMBus transaction-layer example map. |
+| `SMBUS_SAMPLE_PROFILE_UBM` | `1U` | Builds the SFF-TA-1005 UBM Controller shell. |
+| `SMBUS_SAMPLE_PROFILE` | `SMBUS_SAMPLE_PROFILE_UBM` in the checked-in sample | Selects the active sample profile. |
+| `SMBUS_UBM_CONTROLLER_ADDRESS_7BIT` | `SMBUS_ADDRESS_INVALID_FALLBACK_7BIT` | 7-bit UBM Controller address. Default resolves to `0x5A`. |
+| `SMBUS_UBM_UPDATE_ADDRESS_7BIT` | `0x5CU` | Placeholder 7-bit update-mode target address advertised by the sample command shell. |
+| `SMBUS_UBM_CHECKSUM_SEED` | `0xA5U` | UBM Controller checksum seed. This is not SMBus PEC. |
+| `SMBUS_UBM_DESCRIPTOR_COUNT` | `2U` | Number of sample DFC descriptors exposed by the UBM Controller profile. |
+
 PEC and debug settings:
 
 | Define | Default | Purpose |
@@ -525,7 +738,7 @@ Buffer and recovery settings:
 | Define | Default | Purpose |
 | --- | --- | --- |
 | `SMBUS_RX_BUFFER_SIZE` | `40U` | Fixed RX buffer size. |
-| `SMBUS_TX_BUFFER_SIZE` | `34U` | Fixed TX buffer size, sized for 32-byte block data plus count/PEC headroom. |
+| `SMBUS_TX_BUFFER_SIZE` | `40U` | Fixed TX buffer size, sized for 32-byte SMBus block data plus UBM descriptor/checksum headroom. |
 | `SMBUS_MAX_BLOCK_SIZE` | `32U` | Maximum SMBus block payload length. |
 | `SMBUS_DEBUG_QUEUE_SIZE` | `96U` | Background debug event queue depth. |
 | `SMBUS_DEBUG_FRAME_QUEUE_SIZE` | `32U` | RX frame snapshot queue depth. |
@@ -593,6 +806,11 @@ decides whether PEC is disabled, optional, or required. `SMBUS_PEC_BACKEND`
 only decides whether the CRC-8 math uses software or the platform hardware CRC
 peripheral.
 
+In the UBM profile, the UBM Controller path intentionally reports `pec=0`
+because SFF-TA-1005 Controller commands use the `0xA5` seed checksum described
+above, not SMBus PEC. For UBM Controller reads, the final response byte is the
+UBM checksum and is verified by the host validation tool.
+
 SMBus PEC framing rules used by this firmware:
 
 - `Write Byte w/PEC`: the host/master sends `addr(W) + cmd + data + PEC`; the slave validates the write PEC.
@@ -613,6 +831,10 @@ To switch PEC CRC implementation, set `SMBUS_PEC_BACKEND` in `smbus_cfg_user.h`:
 - Debug logging can change timing if used excessively; keep bus-critical behavior in ISR.
 - The example command map is only for transaction-layer validation.
 - Product command ownership must be added by the product firmware owner.
+- VPP is intentionally not implemented as a profile in this workspace. Public
+  material identifies it as an Intel/OEM vendor protocol over SMBus/I2C, but
+  does not provide a complete common command flow suitable for a standards-backed
+  validation shell.
 - Forced clock-low/stuck-bus timeout injection still requires external lab setup or a dedicated master-side test path.
 
 ## Related Validation Documents

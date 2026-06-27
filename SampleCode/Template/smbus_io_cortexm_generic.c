@@ -73,6 +73,7 @@ void smbus_io_i2c_slave_open(unsigned char slave_address)
     CLK_EnableModuleClock(SMBUS_PORT_I2C_MODULE);
     I2C_Open(SMBUS_PORT_I2C_INSTANCE, SMBUS_PORT_I2C_BUS_CLOCK);
     I2C_SetSlaveAddr(SMBUS_PORT_I2C_INSTANCE, 0U, address_7bit, 0U);
+    I2C_SetSlaveAddrMask(SMBUS_PORT_I2C_INSTANCE, 0U, 0U);
     I2C_SET_CONTROL_REG(SMBUS_PORT_I2C_INSTANCE, I2C_CTL_SI_AA);
     g_smbus_i2c_next_ctrl = I2C_CTL_SI_AA;
 }

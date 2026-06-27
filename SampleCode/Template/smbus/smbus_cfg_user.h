@@ -22,11 +22,32 @@
 #define SMBUS_ADDRESS_7BIT_TO_READ(addr7)     ((unsigned char)(((addr7) << 1) | 0x01U))
 
 /*
+    Sample command profile selection.
+
+    GENERIC keeps the workspace as a pure SMBus transaction-layer example.
+    UBM enables the SFF-TA-1005 UBM Controller shell:
+    - UBM Controller responds at SMBUS_UBM_CONTROLLER_ADDRESS_7BIT.
+    - UBM Controller uses the SFF-TA-1005 checksum seed 0xA5, not SMBus PEC.
+*/
+#define SMBUS_SAMPLE_PROFILE_GENERIC          0U
+#define SMBUS_SAMPLE_PROFILE_UBM              1U
+
+#ifndef SMBUS_SAMPLE_PROFILE
+// #define SMBUS_SAMPLE_PROFILE                  SMBUS_SAMPLE_PROFILE_GENERIC
+#define SMBUS_SAMPLE_PROFILE                  SMBUS_SAMPLE_PROFILE_UBM
+#endif
+
+#define SMBUS_UBM_CONTROLLER_ADDRESS_7BIT     SMBUS_ADDRESS_INVALID_FALLBACK_7BIT
+#define SMBUS_UBM_UPDATE_ADDRESS_7BIT         0x5CU
+#define SMBUS_UBM_CHECKSUM_SEED               0xA5U
+#define SMBUS_UBM_DESCRIPTOR_COUNT            2U
+
+/*
     Fixed transaction buffers. No dynamic allocation is used.
     TX size is block-size plus count/PEC overhead.
 */
 #define SMBUS_RX_BUFFER_SIZE                  40U
-#define SMBUS_TX_BUFFER_SIZE                  34U
+#define SMBUS_TX_BUFFER_SIZE                  40U
 #define SMBUS_MAX_BLOCK_SIZE                  32U
 #define SMBUS_DEBUG_QUEUE_SIZE                96U
 #define SMBUS_DEBUG_FRAME_QUEUE_SIZE          32U
