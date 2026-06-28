@@ -1,4 +1,5 @@
 
+CLK_GetCPUFreq : 
 CLK_GetCPUFreq : 48000000
 CLK_GetHCLKFreq : 48000000
 CLK_GetHXTFreq :        0
